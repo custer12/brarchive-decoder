@@ -52,7 +52,7 @@ def read_entry_descriptor(data, offset):
     return name, contents_offset, contents_len, next_offset
 
 def decode_brarchive_to_dict(data):
-    """brarchive 파일을 딕셔너리로 디코딩"""
+    """brarchive 파일을 딕셔너리로 디코딩 (Rust 라이브러리와 동일한 로직)"""
     # 헤더 읽기
     entries_count, version, header_end = read_header(data)
     
