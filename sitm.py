@@ -114,39 +114,78 @@ if uploaded_file is not None:
         with st.spinner("파일을 디코딩하는 중..."):
             files_dict, entries_count, version = decode_brarchive_to_dict(data)
         
-        st.success(f"✅ 디코딩 완료! (파일 수: {entries_count}, 버전: {version})")
+        if entries_count == 0:
+            st.warning("⚠️ 이 아카이브는 빈 아카이브입니다. (파일이 0개)")
+        else:
+            st.success(f"✅ 디코딩 완료! (파일 수: {entries_count}, 버전: {version})")
         
         # 사이드바에 파일 목록 표시
-        with st.sidebar:
-            st.header("📁 파일 목록")
-            selected_file = st.selectbox(
-                "파일 선택",
-                options=list(files_dict.keys()),
-                key="file_selector"
-            )
+        if len(files_dict) > 0:
+            with st.sidebar:
+                st.header("📁 파일 목록")
+                selected_file = st.selectbox(
+                    "파일 선택",
+                    options=list(files_dict.keys()),
+                    key="file_selector"
+                )
+        else:
+            st.info("이 아카이브에는 파일이 없습니다.")
+            selected_file = None
         
         # 메인 영역
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader(f"📄 {selected_file}")
+        if selected_file is not None:
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.subheader(f"📄 {selected_file}")
             
             # 파일 내용 표시
             file_content = files_dict[selected_file]
             
-            # JSON 파일인지 확인
-            try:
-                import json
-                if selected_file.endswith('.json'):
-                    json_content = json.loads(file_content.decode('utf-8'))
-                    st.json(json_content)
-                else:
-                    # 텍스트 파일인지 확인
+            # 이미지 파일인지 확인
+            is_image = False
+            image_extensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga']
+            file_ext_lower = Path(selected_file).suffix.lower()
+            
+            if file_ext_lower in image_extensions:
+                is_image = True
+                try:
+                    from PIL import Image
+                    import io as image_io
+                    img = Image.open(image_io.BytesIO(file_content))
+                    st.image(img, caption=selected_file, use_container_width=True)
+                    st.info(f"이미지 크기: {img.size[0]} x {img.size[1]} pixels")
+                except Exception as e:
+                    st.warning(f"이미지 로드 실패: {str(e)}")
+                    is_image = False
+            
+            if not is_image:
+                # JSON 파일인지 확인
+                try:
+                    import json
+                    if selected_file.endswith('.json'):
+                        json_content = json.loads(file_content.decode('utf-8'))
+                        st.json(json_content)
+                    else:
+                        # 텍스트 파일인지 확인
+                        try:
+                            text_content = file_content.decode('utf-8')
+                            st.code(text_content, language='text')
+                        except UnicodeDecodeError:
+                            # 바이너리 파일
+                            st.info("이 파일은 바이너리 파일입니다.")
+                            st.download_button(
+                                label="📥 파일 다운로드",
+                                data=file_content,
+                                file_name=selected_file,
+                                mime="application/octet-stream"
+                            )
+                except json.JSONDecodeError:
+                    # JSON 파싱 실패
                     try:
                         text_content = file_content.decode('utf-8')
                         st.code(text_content, language='text')
                     except UnicodeDecodeError:
-                        # 바이너리 파일
                         st.info("이 파일은 바이너리 파일입니다.")
                         st.download_button(
                             label="📥 파일 다운로드",
@@ -154,53 +193,70 @@ if uploaded_file is not None:
                             file_name=selected_file,
                             mime="application/octet-stream"
                         )
-            except json.JSONDecodeError:
-                # JSON 파싱 실패
-                try:
-                    text_content = file_content.decode('utf-8')
-                    st.code(text_content, language='text')
-                except UnicodeDecodeError:
-                    st.info("이 파일은 바이너리 파일입니다.")
-                    st.download_button(
-                        label="📥 파일 다운로드",
-                        data=file_content,
-                        file_name=selected_file,
-                        mime="application/octet-stream"
-                    )
+            
+                # 모든 파일에 다운로드 버튼 표시
+                st.download_button(
+                    label="📥 파일 다운로드",
+                    data=file_content,
+                    file_name=selected_file,
+                    mime="application/octet-stream",
+                    key=f"download_{selected_file}"
+                )
+            
+            with col2:
+                st.subheader("📊 정보")
+                st.metric("총 파일 수", entries_count)
+                st.metric("아카이브 버전", version)
+                if selected_file is not None:
+                    st.metric("선택된 파일 크기", f"{len(files_dict[selected_file]):,} bytes")
         
-        with col2:
-            st.subheader("📊 정보")
-            st.metric("총 파일 수", entries_count)
-            st.metric("아카이브 버전", version)
-            st.metric("선택된 파일 크기", f"{len(files_dict[selected_file]):,} bytes")
-            
-            # 전체 다운로드
-            st.markdown("---")
+        # 전체 다운로드 및 파일 목록
+        st.markdown("---")
+        col_download, col_list = st.columns([1, 2])
+        
+        with col_download:
             st.subheader("💾 다운로드")
-            
-            zip_buffer = create_zip_from_files(files_dict)
-            # 파일명에서 확장자 제거 (대소문자 무시)
-            base_name = Path(uploaded_file.name).stem
-            st.download_button(
-                label="📦 전체 파일 ZIP 다운로드",
-                data=zip_buffer,
-                file_name=f"{base_name}_decoded.zip",
-                mime="application/zip"
-            )
+            if len(files_dict) > 0:
+                zip_buffer = create_zip_from_files(files_dict)
+                # 파일명에서 확장자 제거 (대소문자 무시)
+                base_name = Path(uploaded_file.name).stem
+                st.download_button(
+                    label="📦 전체 파일 ZIP 다운로드",
+                    data=zip_buffer,
+                    file_name=f"{base_name}_decoded.zip",
+                    mime="application/zip"
+                )
+            else:
+                st.info("다운로드할 파일이 없습니다.")
         
         # 파일 목록 테이블
-        st.markdown("---")
-        st.subheader("📋 모든 파일 목록")
-        
-        file_list_data = []
-        for name, content in files_dict.items():
-            file_list_data.append({
-                "파일명": name,
-                "크기 (bytes)": len(content),
-                "타입": "JSON" if name.endswith('.json') else ("텍스트" if content.startswith(b'\xef\xbb\xbf') or all(c < 128 for c in content[:100]) else "바이너리")
-            })
-        
-        st.dataframe(file_list_data, use_container_width=True)
+        if len(files_dict) > 0:
+            st.markdown("---")
+            st.subheader("📋 모든 파일 목록")
+            
+            file_list_data = []
+            image_extensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga']
+            for name, content in files_dict.items():
+                file_ext = Path(name).suffix.lower()
+                if file_ext in image_extensions:
+                    file_type = "이미지"
+                elif name.endswith('.json'):
+                    file_type = "JSON"
+                else:
+                    try:
+                        # 텍스트 파일인지 확인
+                        content[:100].decode('utf-8')
+                        file_type = "텍스트"
+                    except:
+                        file_type = "바이너리"
+                
+                file_list_data.append({
+                    "파일명": name,
+                    "크기 (bytes)": len(content),
+                    "타입": file_type
+                })
+            
+            st.dataframe(file_list_data, use_container_width=True)
         
     except Exception as e:
         st.error(f"❌ 오류 발생: {str(e)}")
