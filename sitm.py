@@ -9,6 +9,7 @@ import zipfile
 import tempfile
 from pathlib import Path
 import io
+from collections import defaultdict
 
 # brarchive 상수
 MAGIC = 0x267052A0B125277D
@@ -86,6 +87,81 @@ def create_zip_from_files(files_dict):
             zip_file.writestr(name, contents)
     zip_buffer.seek(0)
     return zip_buffer
+
+def build_file_tree(files_dict):
+    """파일 딕셔너리를 트리 구조로 변환"""
+    tree = {}
+    
+    for file_path, content in files_dict.items():
+        # 경로를 분리
+        parts = file_path.replace('\\', '/').split('/')
+        current = tree
+        
+        # 디렉토리 구조 생성
+        for i, part in enumerate(parts[:-1]):
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        
+        # 파일 추가 (크기 정보 포함)
+        file_name = parts[-1]
+        file_size = len(content)
+        current[file_name] = {'_type': 'file', '_size': file_size, '_path': file_path}
+    
+    return tree
+
+def render_tree_ui(node, parent_path="", files_dict=None, selected_file=None, key_prefix="", selectable=True):
+    """트리 노드를 재귀적으로 Streamlit UI로 렌더링"""
+    # 디렉토리와 파일을 분리
+    dirs = {}
+    files = {}
+    
+    for key, value in sorted(node.items()):
+        if isinstance(value, dict):
+            if '_type' in value and value['_type'] == 'file':
+                files[key] = value
+            else:
+                dirs[key] = value
+        else:
+            dirs[key] = value
+    
+    # 디렉토리 먼저 표시
+    for dir_name, dir_content in dirs.items():
+        full_path = f"{parent_path}/{dir_name}" if parent_path else dir_name
+        with st.expander(f"📁 {dir_name}", expanded=False):
+            render_tree_ui(dir_content, full_path, files_dict, selected_file, f"{key_prefix}_{dir_name}", selectable)
+    
+    # 파일 표시
+    for file_name, file_info in files.items():
+        if isinstance(file_info, dict) and '_type' in file_info:
+            file_path = file_info.get('_path', file_name)
+            
+            # 파일 타입 아이콘
+            file_ext = Path(file_name).suffix.lower()
+            if file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga']:
+                icon = "🖼️"
+            elif file_ext == '.json':
+                icon = "📄"
+            elif file_ext in ['.txt', '.lang', '.md']:
+                icon = "📝"
+            else:
+                icon = "📦"
+            
+            # 파일 선택 버튼 또는 단순 표시
+            if selectable:
+                if st.button(f"{icon} {file_name}", key=f"file_btn_{key_prefix}_{file_name}"):
+                    st.session_state['selected_file'] = file_path
+                    st.rerun()
+            else:
+                st.markdown(f"{icon} {file_name}")
+        else:
+            file_path = file_name if not parent_path else f"{parent_path}/{file_name}"
+            if selectable:
+                if st.button(f"📄 {file_name}", key=f"file_btn_{key_prefix}_{file_name}"):
+                    st.session_state['selected_file'] = file_path
+                    st.rerun()
+            else:
+                st.markdown(f"📄 {file_name}")
 
 def encode_brarchive(files_dict):
     """파일 딕셔너리를 brarchive 형식으로 인코딩"""
@@ -180,13 +256,30 @@ with tab1:
             else:
                 st.success(f"디코딩 완료! (파일 수: {entries_count}, 버전: {version})")
             
-            # 사이드바에 파일 목록 표시
+            # 사이드바에 파일 목록 표시 (트리 구조)
             if len(files_dict) > 0:
                 with st.sidebar:
                     st.header("파일 목록")
+                    
+                    # 세션 상태에서 선택된 파일 가져오기
+                    if 'selected_file' not in st.session_state:
+                        st.session_state['selected_file'] = list(files_dict.keys())[0]
+                    
+                    # 트리 구조 생성 및 표시
+                    file_tree = build_file_tree(files_dict)
+                    
+                    # 트리 UI 렌더링
+                    render_tree_ui(file_tree, files_dict=files_dict, selected_file=st.session_state.get('selected_file'))
+                    
+                    # 선택된 파일
+                    selected_file = st.session_state.get('selected_file', list(files_dict.keys())[0])
+                    
+                    # 파일 선택 드롭다운 (대체 방법)
+                    st.markdown("---")
                     selected_file = st.selectbox(
-                        "파일 선택",
+                        "또는 여기서 선택",
                         options=list(files_dict.keys()),
+                        index=list(files_dict.keys()).index(selected_file) if selected_file in files_dict.keys() else 0,
                         key="file_selector"
                     )
             else:
@@ -317,42 +410,80 @@ with tab1:
     else:
         st.info("👆 위에서 brarchive 파일을 업로드하세요")
         
-        # 예시 정보
-        with st.expander("BRArchive란?"):
-            st.markdown("""
-            BRArchive는 Minecraft Bedrock Edition에서 사용하는 아카이브 포맷입니다.
-            여러 파일을 하나의 .brarchive 파일로 묶어서 저장합니다.
-            
-            **지원 기능:**
-            - brarchive 파일 업로드 및 디코딩
-            - 파일 내용 미리보기 (JSON, 텍스트, 이미지)
-            - 개별 파일 다운로드
-            - 전체 파일 ZIP 다운로드
-            """)
+        
 
 with tab2:
     st.header("BRArchive 인코딩")
     st.markdown("---")
     
-    st.subheader("파일 업로드")
-    uploaded_files = st.file_uploader(
-        "인코딩할 파일들을 업로드하세요 (여러 파일 선택 가능)",
-        type=None,
-        accept_multiple_files=True,
-        help="이미지, 텍스트, JSON 등 모든 파일 타입을 지원합니다",
-        key="encode_uploader"
+    # 업로드 방법 선택
+    upload_method = st.radio(
+        "업로드 방법 선택",
+        ["개별 파일", "ZIP 파일 (폴더)"],
+        horizontal=True,
+        key="upload_method"
     )
     
-    if uploaded_files:
-        st.info(f"{len(uploaded_files)}개의 파일이 업로드되었습니다.")
+    files_dict = {}
+    
+    if upload_method == "개별 파일":
+        st.subheader("파일 업로드")
+        uploaded_files = st.file_uploader(
+            "인코딩할 파일들을 업로드하세요 (여러 파일 선택 가능)",
+            type=None,
+            accept_multiple_files=True,
+            help="이미지, 텍스트, JSON 등 모든 파일 타입을 지원합니다",
+            key="encode_uploader"
+        )
         
-        # 파일 딕셔너리 생성
-        files_dict = {}
-        for uploaded_file in uploaded_files:
-            files_dict[uploaded_file.name] = uploaded_file.read()
+        if uploaded_files:
+            # 파일 딕셔너리 생성
+            for uploaded_file in uploaded_files:
+                files_dict[uploaded_file.name] = uploaded_file.read()
+    
+    else:  # ZIP 파일
+        st.subheader("ZIP 파일 업로드 (폴더)")
+        uploaded_zip = st.file_uploader(
+            "인코딩할 폴더를 ZIP 파일로 업로드하세요",
+            type=['zip'],
+            help="폴더를 ZIP으로 압축한 후 업로드하세요",
+            key="encode_zip_uploader"
+        )
         
-        # 파일 목록 표시
+        if uploaded_zip:
+            try:
+                with st.spinner("ZIP 파일을 압축 해제하는 중..."):
+                    zip_file = zipfile.ZipFile(io.BytesIO(uploaded_zip.read()))
+                    
+                    # ZIP 파일 내의 모든 파일 읽기
+                    for file_info in zip_file.infolist():
+                        if not file_info.is_dir():
+                            file_path = file_info.filename
+                            # 경로 구분자 정규화
+                            file_path = file_path.replace('\\', '/')
+                            file_content = zip_file.read(file_info)
+                            files_dict[file_path] = file_content
+                
+                st.success(f"ZIP 파일에서 {len(files_dict)}개의 파일을 추출했습니다.")
+            except Exception as e:
+                st.error(f"ZIP 파일 처리 오류: {str(e)}")
+                st.exception(e)
+    
+    if files_dict:
+        st.info(f"{len(files_dict)}개의 파일이 준비되었습니다.")
+        
+        # 파일 목록 표시 (트리 구조)
         st.subheader("업로드된 파일 목록")
+        
+        # 트리 구조로 표시
+        file_tree = build_file_tree(files_dict)
+        
+        with st.expander("파일 트리 보기", expanded=True):
+            render_tree_ui(file_tree, files_dict=files_dict, selectable=False)
+        
+        # 테이블 형태로도 표시
+        st.markdown("---")
+        st.subheader("파일 목록 (테이블)")
         file_list = []
         for name, content in files_dict.items():
             file_ext = Path(name).suffix.lower()
@@ -431,21 +562,4 @@ with tab2:
                 st.exception(e)
     else:
         st.info("👆 위에서 인코딩할 파일들을 업로드하세요")
-        
-        with st.expander("ℹ인코딩 정보"):
-            st.markdown("""
-            **BRArchive 인코딩이란?**
-            
-            여러 파일을 하나의 .brarchive 파일로 묶는 과정입니다.
-            
-            **특징:**
-            - 압축 없이 원본 데이터를 그대로 저장
-            - 이미지, 텍스트, JSON 등 모든 파일 타입 지원
-            - Minecraft Bedrock Edition에서 사용하는 표준 포맷
-            
-            **사용 예시:**
-            - 여러 텍스처 이미지를 하나의 아카이브로 묶기
-            - 게임 리소스 파일들을 패키징
-            - 여러 설정 파일을 하나로 묶기
-            """)
 
