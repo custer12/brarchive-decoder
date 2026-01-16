@@ -94,9 +94,16 @@ st.markdown("---")
 # 파일 업로드
 uploaded_file = st.file_uploader(
     "brarchive 파일을 업로드하세요",
-    type=['brarchive'],
-    help=".brarchive 확장자를 가진 파일을 업로드하세요"
+    type=None,  # 모든 파일 타입 허용 (확장자 체크는 아래에서 수행)
+    help=".brarchive 또는 .BRArchive 확장자를 가진 파일을 업로드하세요"
 )
+
+# 파일 확장자 체크 (대소문자 무시)
+if uploaded_file is not None:
+    file_ext = Path(uploaded_file.name).suffix.lower()
+    if file_ext != '.brarchive':
+        st.error(f"❌ 지원하지 않는 파일 형식입니다. .brarchive 또는 .BRArchive 파일만 업로드할 수 있습니다. (업로드된 파일: {uploaded_file.name})")
+        st.stop()
 
 if uploaded_file is not None:
     try:
@@ -172,10 +179,12 @@ if uploaded_file is not None:
             st.subheader("💾 다운로드")
             
             zip_buffer = create_zip_from_files(files_dict)
+            # 파일명에서 확장자 제거 (대소문자 무시)
+            base_name = Path(uploaded_file.name).stem
             st.download_button(
                 label="📦 전체 파일 ZIP 다운로드",
                 data=zip_buffer,
-                file_name=f"{uploaded_file.name.replace('.brarchive', '')}_decoded.zip",
+                file_name=f"{base_name}_decoded.zip",
                 mime="application/zip"
             )
         
